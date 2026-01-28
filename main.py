@@ -1,87 +1,70 @@
-"""
-Backend RAG con FastAPI, Ollama y ChromaDB.
+import ollama
 
-Sistema de Retrieval-Augmented Generation para consultas sobre documentos Markdown.
-"""
-from contextlib import asynccontextmanager
-
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-
-from app.api.routes import router
-from app.config import get_settings
+dataset = []
+with open('cat-facts.txt', 'r') as file:
+  dataset = file.readlines()
+  print(f'Loaded {len(dataset)} entries')
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Lifecycle del servidor - inicialización y limpieza."""
-    # Startup
-    settings = get_settings()
-    print(f"🚀 Iniciando Backend RAG")
-    print(f"📁 Knowledge directory: {settings.knowledge_dir}")
-    print(f"🤖 Ollama model: {settings.ollama_model}")
-    print(f"💾 ChromaDB: {settings.chroma_persist_directory}")
-    yield
-    # Shutdown
-    print("👋 Cerrando Backend RAG")
 
+EMBEDDING_MODEL = 'hf.co/CompendiumLabs/bge-base-en-v1.5-gguf'
+LANGUAGE_MODEL = 'hf.co/bartowski/Llama-3.2-1B-Instruct-GGUF'
 
-app = FastAPI(
-    title="Backend RAG - Markdown Knowledge Base",
-    description="""
-## Sistema RAG con Ollama y ChromaDB
+# Each element in the VECTOR_DB will be a tuple (chunk, embedding)
+# The embedding is a list of floats, for example: [0.1, 0.04, -0.34, 0.21, ...]
+VECTOR_DB = []
 
-API para consultar una base de conocimiento construida a partir de archivos Markdown.
+def add_chunk_to_database(chunk):
+  embedding = ollama.embed(model=EMBEDDING_MODEL, input=chunk)['embeddings'][0]
+  VECTOR_DB.append((chunk, embedding))
 
-### Características:
-- 📚 **Ingesta de documentos**: Procesa archivos `.md` y los indexa
-- 🔍 **Búsqueda semántica**: Encuentra información relevante usando embeddings
-- 🤖 **Generación de respuestas**: Usa Ollama para generar respuestas contextualizadas
-- 💾 **Persistencia**: ChromaDB mantiene los datos entre reinicios
+# populate the vector DB from the dataset
+for i, chunk in enumerate(dataset):
+  add_chunk_to_database(chunk)
+  print(f'Added chunk {i+1}/{len(dataset)} to the database')
 
-### Flujo de uso:
-1. Coloca tus archivos `.md` en la carpeta `knowledge/`
-2. Llama a `POST /api/ingest` para indexar los documentos
-3. Usa `POST /api/query` para hacer preguntas
-    """,
-    version="1.0.0",
-    lifespan=lifespan
+def cosine_similarity(a, b):
+  dot_product = sum([x * y for x, y in zip(a, b)])
+  norm_a = sum([x ** 2 for x in a]) ** 0.5
+  norm_b = sum([x ** 2 for x in b]) ** 0.5
+  return dot_product / (norm_a * norm_b)
+
+def retrieve(query, top_n=3):
+  query_embedding = ollama.embed(model=EMBEDDING_MODEL, input=query)['embeddings'][0]
+  # temporary list to store (chunk, similarity) pairs
+  similarities = []
+  for chunk, embedding in VECTOR_DB:
+    similarity = cosine_similarity(query_embedding, embedding)
+    similarities.append((chunk, similarity))
+  # sort by similarity in descending order, because higher similarity means more relevant chunks
+  similarities.sort(key=lambda x: x[1], reverse=True)
+  # finally, return the top N most relevant chunks
+  return similarities[:top_n]
+
+input_query = input('Ask me a question: ')
+retrieved_knowledge = retrieve(input_query)
+
+print('Retrieved knowledge:')
+for chunk, similarity in retrieved_knowledge:
+  print(f' - (similarity: {similarity:.2f}) {chunk}')
+
+# build instruction prompt without backslashes inside the f-string expression
+context_text = '\n'.join([f' - {chunk}' for chunk, similarity in retrieved_knowledge])
+
+instruction_prompt = f'''You are a helpful chatbot.
+Use only the following pieces of context to answer the question. Don't make up any new information:
+{context_text}
+'''
+stream = ollama.chat(
+  model=LANGUAGE_MODEL,
+  messages=[
+    {'role': 'system', 'content': instruction_prompt},
+    {'role': 'user', 'content': input_query},
+  ],
+  stream=True,
 )
 
-# CORS - permitir todos los orígenes para desarrollo
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Incluir rutas
-app.include_router(router, prefix="/api")
-
-
-@app.get("/", tags=["Root"])
-async def root():
-    """Endpoint raíz con información del servicio."""
-    return {
-        "service": "Backend RAG - Markdown Knowledge Base",
-        "version": "1.0.0",
-        "docs": "/docs",
-        "endpoints": {
-            "health": "/api/health",
-            "ingest": "/api/ingest",
-            "query": "/api/query",
-            "documents": "/api/documents"
-        }
-    }
-
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(
-        "main:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True
-    )
+# print the response from the chatbot in real-time
+print('Chatbot response:')
+for chunk in stream:
+  print(chunk['message']['content'], end='', flush=True)
