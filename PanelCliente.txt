@@ -1,0 +1,32 @@
+Introducción al Panel del Cliente
+
+Bienvenido al Panel del Cliente. Esta interfaz ha sido diseñada para ofrecer un control total sobre su flota de vehículos, permitiendo la gestión de usuarios, la configuración de seguridad geográfica y el monitoreo en tiempo real.
+
+Indicadores de Estado Global
+
+En la parte superior izquierda de la plataforma encontrará tres indicadores que representan el estado actual de los dispositivos de su flota.
+
+Rojo (Alarmados): Indica vehículos que han disparado una alerta de seguridad.
+
+Amarillo (Liberados): Indica vehículos en estado desarmado.
+
+Verde (Armados): Indica vehículos con el sistema de seguridad activo.
+
+Módulos Principales
+
+La aplicación se divide en las siguientes secciones clave para su operación diaria.
+
+Mapa
+Es la herramienta principal de visualización. En esta sección podrá visualizar la lista completa de sus vehículos sobre el mapa, buscar unidades específicas mediante el ID del dispositivo o el nombre del vehículo, acceder directamente a la sección de detalles de cada unidad y aplicar filtros rápidos para ver solo unidades según su estado: liberados, armados o alarmados.
+
+Usuarios
+Este apartado está dedicado a la gestión del personal que tiene acceso a la plataforma. Permite visualizar la lista de usuarios actuales y registrar nuevos usuarios.
+
+Perfiles de usuario
+Para una administración eficiente, los permisos se manejan mediante plantillas. Se pueden crear perfiles con permisos específicos y asignarlos al crear un usuario nuevo, garantizando que cada persona tenga acceso solo a las funciones necesarias.
+
+Vehículos
+Listado detallado de todas las unidades vinculadas a su cuenta. Permite consultar el estado actual de la unidad, su dirección exacta y la fecha de su última actualización, descargar reportes en formato Excel, editar los datos informativos del vehículo y acceder al panel individual de cada unidad para configuraciones avanzadas.
+
+Geocercas
+Espacio dedicado a la seguridad geográfica. Permite crear perímetros virtuales en el mapa y editar zonas existentes para ajustar los radios de alerta y monitoreo.

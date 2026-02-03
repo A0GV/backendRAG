@@ -1,6 +1,7 @@
 import os
 import sys
 import warnings
+import glob
 
 # Suppress specific warnings if desired
 warnings.filterwarnings("ignore")
@@ -8,56 +9,92 @@ warnings.filterwarnings("ignore")
 # Fix for protobuf issue
 os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
 
-from langchain_community.document_loaders import TextLoader
-from langchain_ollama import OllamaEmbeddings
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.document_loaders import TextLoader, DirectoryLoader
 from langchain_community.vectorstores import Chroma
-from langchain.prompts import ChatPromptTemplate, PromptTemplate
-from langchain_core.output_parsers import StrOutputParser
+from langchain_ollama import OllamaEmbeddings
 from langchain_ollama.chat_models import ChatOllama
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
+from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
-from langchain.retrievers.multi_query import MultiQueryRetriever
+from langchain_classic.retrievers.multi_query import MultiQueryRetriever
+
 
 # Configuration
-DATA_PATH = "cat-facts.txt"
+DATA_DIR = "."  # Directorio donde están los archivos
+FILE_EXTENSIONS = ["*.txt", "*.md"]  # Extensiones a procesar
 EMBEDDING_MODEL_NAME = "qwen3-embedding:8b"
-LLM_MODEL_NAME = "qwen3-vl:8b"
+LLM_MODEL_NAME = "gemma3:4b"
 COLLECTION_NAME = "local-rag"
+PERSIST_DIRECTORY = "./chroma_db"  # Directorio de persistencia
+
+def load_documents():
+    """Load all .txt and .md files from the data directory"""
+    all_docs = []
+    file_count = 0
+    
+    for extension in FILE_EXTENSIONS:
+        files = glob.glob(os.path.join(DATA_DIR, extension))
+        for file_path in files:
+            try:
+                print(f"Loading {file_path}...")
+                loader = TextLoader(file_path=file_path, encoding='utf-8')
+                docs = loader.load()
+                all_docs.extend(docs)
+                file_count += 1
+            except Exception as e:
+                print(f"Error loading {file_path}: {e}")
+    
+    print(f"Loaded {file_count} files, {len(all_docs)} documents.")
+    return all_docs
+
+def get_or_create_vectordb():
+    """Get existing vector DB or create new one"""
+    embeddings = OllamaEmbeddings(model=EMBEDDING_MODEL_NAME)
+    
+    # Check if persisted DB exists
+    if os.path.exists(PERSIST_DIRECTORY):
+        print(f"Loading existing vector database from {PERSIST_DIRECTORY}...")
+        vector_db = Chroma(
+            persist_directory=PERSIST_DIRECTORY,
+            embedding_function=embeddings,
+            collection_name=COLLECTION_NAME
+        )
+        print("Vector database loaded.")
+    else:
+        # Create new database
+        print("Creating new vector database...")
+        data = load_documents()
+        
+        if not data:
+            print("No data loaded. Please add .txt or .md files to the directory.")
+            return None
+        
+        # Split and chunk
+        print("Splitting text into chunks...")
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+        chunks = text_splitter.split_documents(data)
+        print(f"Created {len(chunks)} chunks.")
+        
+        # Create vector database with persistence
+        print(f"Creating vector database with model {EMBEDDING_MODEL_NAME}...")
+        vector_db = Chroma.from_documents(
+            documents=chunks,
+            embedding=embeddings,
+            collection_name=COLLECTION_NAME,
+            persist_directory=PERSIST_DIRECTORY
+        )
+        print("Vector database created and persisted.")
+    
+    return vector_db
 
 def main():
-    # 1. Check for file
-    if not os.path.exists(DATA_PATH):
-        print(f"Error: File '{DATA_PATH}' not found in the current directory.")
-        print("Please ensure the file is present or update DATA_PATH in the script.")
-        # Proceeding might fail, but let's try or return? 
-        # Original script printed "Upload a PDF file" and then crashed on loader.
+    # 1. Get or create vector database
+    vector_db = get_or_create_vectordb()
+    if vector_db is None:
         return
 
-    # 2. Load Data
-    print(f"Loading {DATA_PATH}...")
-    loader = TextLoader(file_path=DATA_PATH)
-    data = loader.load()
-    if not data:
-        print("No data loaded.")
-        return
-    print(f"Loaded {len(data)} documents.") # TextLoader usually loads one document per file
-
-    # 3. Split and chunk
-    print("Splitting text into chunks...")
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=7500, chunk_overlap=100)
-    chunks = text_splitter.split_documents(data)
-    print(f"Created {len(chunks)} chunks.")
-
-    # 4. Vector Database
-    print(f"Creating vector database with model {EMBEDDING_MODEL_NAME}...")
-    vector_db = Chroma.from_documents(
-        documents=chunks,
-        embedding=OllamaEmbeddings(model=EMBEDDING_MODEL_NAME),
-        collection_name=COLLECTION_NAME
-    )
-    print("Vector database created.")
-
-    # 5. Retrieval Setup
+    # 2. Retrieval Setup
     print(f"Initializing LLM {LLM_MODEL_NAME}...")
     llm = ChatOllama(model=LLM_MODEL_NAME)
 
@@ -74,14 +111,16 @@ def main():
     retriever = MultiQueryRetriever.from_llm(
         vector_db.as_retriever(),
         llm,
-        prompt=QUERY_PROMPT
+        prompt=QUERY_PROMPT,
+        parser_key="lines"
     )
 
-    # 6. RAG Chain
+    # 3. RAG Chain
     template = """Answer the question based ONLY on the following context:
     {context}
     Question: {question}
-    """
+    
+    IMPORTANT: Answer in the same language as the question."""
 
     prompt = ChatPromptTemplate.from_template(template)
 
@@ -92,22 +131,31 @@ def main():
         | StrOutputParser()
     )
 
-    # 7. Execute Query
-    query_text = "tell me a random fact abou cats?"
-    print(f"\nProcessing query: '{query_text}'")
+    # 4. Interactive Query Loop
+    print("\n" + "="*60)
+    print("RAG System Ready! Type 'q' to quit.")
+    print("="*60 + "\n")
     
-    try:
-        result = chain.invoke(query_text)
-        print("\n--- Answer ---")
-        print(result)
-        print("--------------\n")
-    except Exception as e:
-        print(f"Error during execution: {e}")
-
-    # Cleanup
-    # Note: Deleting the collection immediately destroys the database. 
-    # Uncomment the next line if you want to reset the DB every time.
-    # vector_db.delete_collection()
+    while True:
+        query_text = input("\nYour question: ").strip()
+        
+        if query_text.lower() == 'q':
+            print("Goodbye!")
+            break
+        
+        if not query_text:
+            print("Please enter a question.")
+            continue
+        
+        print(f"\nProcessing...")
+        
+        try:
+            result = chain.invoke(query_text)
+            print("\n--- Answer ---")
+            print(result)
+            print("--------------")
+        except Exception as e:
+            print(f"Error during execution: {e}")
 
 if __name__ == "__main__":
     main()
