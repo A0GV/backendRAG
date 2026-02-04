@@ -3,11 +3,7 @@ import sys
 import warnings
 import glob
 
-# Suppress specific warnings if desired
-warnings.filterwarnings("ignore")
 
-# Fix for protobuf issue
-os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
 
 from langchain_community.document_loaders import TextLoader, DirectoryLoader
 from langchain_community.vectorstores import Chroma
@@ -21,7 +17,7 @@ from langchain_classic.retrievers.multi_query import MultiQueryRetriever
 
 
 # Configuration
-DATA_DIR = "."  # Directorio donde están los archivos
+DATA_DIR = "dataSet"  # Directorio donde están los archivos
 FILE_EXTENSIONS = ["*.txt", "*.md"]  # Extensiones a procesar
 EMBEDDING_MODEL_NAME = "qwen3-embedding:8b"
 LLM_MODEL_NAME = "gemma3:4b"
