@@ -20,7 +20,7 @@ class RAGEngine:
     """Encapsulates RAG logic for reusable access across applications"""
     
     def __init__(self, data_dir="dataSet", embedding_model="qwen3-embedding:8b", 
-                 llm_model="gemma3:4b", persist_dir="./chroma_db"):
+                 llm_model="llama3.1:latest", persist_dir="./chroma_db"):
         """Initialize RAG Engine
         
         Args:
