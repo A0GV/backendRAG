@@ -47,7 +47,7 @@ class RAGEngine:
     """
     
     def __init__(self, data_dir="dataSet", embedding_model="qwen3-embedding:8b", 
-                 llm_model="llama3.1:latest", persist_dir="./chroma_db"):
+                 llm_model="llama3.1:latest", persist_dir="./chroma_db", recursive=True):
         """
         Inicializa el motor RAG.
         
@@ -56,6 +56,7 @@ class RAGEngine:
             embedding_model: Nombre del modelo de embeddings en Ollama
             llm_model: Nombre del modelo LLM en Ollama
             persist_dir: Directorio donde se guarda la base de datos vectorial
+            recursive: Si es True, busca archivos en subdirectorios. Si es False, solo en data_dir.
         
         Flujo de inicialización:
         1. Guarda la configuración
@@ -67,6 +68,7 @@ class RAGEngine:
         self.embedding_model = embedding_model
         self.llm_model = llm_model
         self.persist_dir = persist_dir
+        self.recursive = recursive
         self.collection_name = "local-rag"
         
         # PASO 1: Configurar la base de datos vectorial
@@ -81,7 +83,7 @@ class RAGEngine:
         Carga todos los archivos .txt y .md del directorio de datos.
         
         Flujo:
-        1. Busca todos los archivos con extensión .txt y .md
+        1. Busca todos los archivos con extensión .txt y .md (recursivamente si recursive=True)
         2. Los carga uno por uno usando TextLoader
         3. Retorna una lista de objetos Document
         
@@ -95,7 +97,13 @@ class RAGEngine:
         # Iterar por cada extensión de archivo
         for extension in file_extensions:
             # Buscar todos los archivos con esta extensión
-            files = glob.glob(os.path.join(self.data_dir, extension))
+            if self.recursive:
+                # Búsqueda recursiva usando glob y **
+                pattern = os.path.join(self.data_dir, "**", extension)
+                files = glob.glob(pattern, recursive=True)
+            else:
+                # Búsqueda solo en el nivel superior
+                files = glob.glob(os.path.join(self.data_dir, extension))
             
             # Cargar cada archivo encontrado
             for file_path in files:
@@ -301,7 +309,7 @@ class RAGEngine:
         - Tarda más tiempo en ejecutar
         
         Flujo:
-        1. Borra la colección actual de ChromaDB
+        1. Borra completamente el directorio chroma_db/ del disco
         2. Vuelve a ejecutar _setup_vector_db() (carga archivos, crea chunks, embeddings)
         3. Reconfigura el chain con la nueva BD
         
@@ -310,10 +318,35 @@ class RAGEngine:
             # ... agregas nuevos archivos a dataSet/ ...
             rag.update_database()  # Recrea la BD con todos los archivos
         """
-        print("Actualizando base de datos vectorial...")
+        import shutil
+        import gc
         
-        # PASO 1: Borrar la colección existente
-        self.vector_db.delete_collection()
+        print(f"Actualizando base de datos vectorial en {self.persist_dir}...")
+        
+        # PASO 1: Liberar recursos y borrar directorio
+        # Intentar liberar el objeto vector_db para soltar locks
+        if hasattr(self, 'vector_db'):
+            self.vector_db = None
+        
+        # IMPORTANTE: También liberar el chain, ya que tiene referencias al vector_db
+        if hasattr(self, 'chain'):
+            self.chain = None
+            
+        gc.collect()  # Forzar recolección de basura
+        
+        # Esperar un momento para que el OS libere los archivos
+        import time
+        time.sleep(1.0)
+        
+        if os.path.exists(self.persist_dir):
+            try:
+                shutil.rmtree(self.persist_dir)
+                print(f"Directorio {self.persist_dir} eliminado.")
+                # Esperar otro momento para asegurar que el directorio se eliminó
+                time.sleep(1.0)
+            except Exception as e:
+                print(f"Error eliminando directorio: {e}")
+                # Si falla borrar, intentamos continuar (puede que falle al crear)
         
         # PASO 2: Recrear la BD desde cero (lee todos los archivos del directorio)
         self.vector_db = self._setup_vector_db()
