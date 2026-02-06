@@ -1,13 +1,13 @@
 from flask import Blueprint, jsonify, request
-from rag_engine import RAGEngine
+from multi_rag_engine import MultiRAGEngine
 
 api = Blueprint("api", __name__)
 
-# Initialize RAG Engine (singleton)
+# Initialize Multi RAG Engine (singleton)
 try:
-    rag_engine = RAGEngine(data_dir="dataSet")
+    rag_engine = MultiRAGEngine()
 except Exception as e:
-    print(f"Error initializing RAG Engine: {e}")
+    print(f"Error initializing Multi RAG Engine: {e}")
     rag_engine = None
 
 
@@ -24,13 +24,15 @@ def ask():
     
     Request JSON:
     {
-        "question": "Your question here"
+        "question": "Your question here",
+        "db_type": "cliente" (default) or "distribuidor"
     }
     
     Response JSON:
     {
         "success": true/false,
-        "answer": "The answer or error message"
+        "answer": "The answer or error message",
+        "db_used": "cliente"
     }
     """
     if not rag_engine:
@@ -42,11 +44,18 @@ def ask():
             return jsonify(success=False, answer="Missing 'question' field"), 400
         
         question = data.get("question", "").strip()
+        db_type = data.get("db_type", "cliente")
+        
         if not question:
             return jsonify(success=False, answer="Question cannot be empty"), 400
         
-        answer = rag_engine.ask(question)
-        return jsonify(success=True, answer=answer), 200
+        # Validar db_type
+        if db_type not in ["cliente", "distribuidor"]:
+             # Opcional: retornar error o simplemente usar default
+             pass 
+        
+        answer = rag_engine.ask(question, db_type=db_type)
+        return jsonify(success=True, answer=answer, db_used=db_type), 200
         
     except Exception as e:
         return jsonify(success=False, answer=str(e)), 500
@@ -54,12 +63,12 @@ def ask():
 
 @api.route("/api/update", methods=["POST"])
 def update_database():
-    """Update the vector database with new documents"""
+    """Update both vector databases with new documents"""
     if not rag_engine:
         return jsonify(success=False, message="RAG Engine not initialized"), 500
     
     try:
         rag_engine.update_database()
-        return jsonify(success=True, message="Database updated successfully"), 200
+        return jsonify(success=True, message="All databases updated successfully"), 200
     except Exception as e:
         return jsonify(success=False, message=str(e)), 500
