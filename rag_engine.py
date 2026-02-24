@@ -4,7 +4,7 @@ Motor RAG (Retrieval-Augmented Generation)
 Este módulo encapsula toda la lógica de un sistema RAG:
 1. Carga documentos (.txt, .md) desde un directorio
 2. Los divide en chunks pequeños (1000 caracteres)
-3. Crea embeddings (vectores numéricos) usando Ollama
+3. Crea embeddings (vectores numéricos) usando OpenAI
 4. Almacena los vectores en ChromaDB
 5. Permite hacer preguntas y recupera documentos relevantes
 6. Genera respuestas usando un LLM basándose en el contexto recuperado
@@ -13,6 +13,10 @@ Este módulo encapsula toda la lógica de un sistema RAG:
 import os
 import warnings
 import glob
+
+# Cargar variables de entorno desde .env
+from dotenv import load_dotenv
+load_dotenv()
 
 # Suprimir advertencias molestas
 warnings.filterwarnings("ignore")
@@ -23,8 +27,7 @@ os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
 # Importaciones de LangChain
 from langchain_community.document_loaders import TextLoader  # Carga archivos de texto
 from langchain_community.vectorstores import Chroma  # Base de datos vectorial
-from langchain_ollama import OllamaEmbeddings  # Genera embeddings con Ollama
-from langchain_ollama.chat_models import ChatOllama  # Modelo de lenguaje
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings  # LLM y Embeddings de OpenAI
 from langchain_text_splitters import RecursiveCharacterTextSplitter  # Divide texto en chunks
 from langchain_core.prompts import ChatPromptTemplate, PromptTemplate  # Plantillas de prompts
 from langchain_core.output_parsers import StrOutputParser  # Parsea salida del LLM
@@ -46,23 +49,32 @@ class RAGEngine:
        └── chain.invoke(): Ejecuta todo el flujo RAG
     """
     
-    def __init__(self, data_dir="dataSet", embedding_model="qwen3-embedding:8b", 
-                 llm_model="llama3.1:latest", persist_dir="./chroma_db", recursive=True):
+    def __init__(self, data_dir="dataSet", embedding_model="text-embedding-3-small", 
+                 llm_model="openai/gpt-4o", persist_dir="./chroma_db", recursive=True):
         """
         Inicializa el motor RAG.
         
         Args:
             data_dir: Directorio que contiene archivos .txt y .md
-            embedding_model: Nombre del modelo de embeddings en Ollama
-            llm_model: Nombre del modelo LLM en Ollama
+            embedding_model: Nombre del modelo de embeddings en OpenAI (default: text-embedding-3-small)
+            llm_model: Nombre del modelo LLM en OpenRouter (default: openai/gpt-4o)
             persist_dir: Directorio donde se guarda la base de datos vectorial
             recursive: Si es True, busca archivos en subdirectorios. Si es False, solo en data_dir.
         
         Flujo de inicialización:
-        1. Guarda la configuración
-        2. Llama a _setup_vector_db() para cargar/crear la BD vectorial
-        3. Llama a _setup_chain() para configurar el pipeline RAG
+        1. Valida que existe la API key de OpenRouter
+        2. Guarda la configuración
+        3. Llama a _setup_vector_db() para cargar/crear la BD vectorial
+        4. Llama a _setup_chain() para configurar el pipeline RAG
         """
+        # Validar que existe la API key
+        if not os.getenv("OPENROUTER_API_KEY"):
+            raise ValueError(
+                "OPENROUTER_API_KEY no encontrada. "
+                "Por favor configura el archivo .env con tu API key de OpenRouter. "
+                "Ver .env.example para más detalles."
+            )
+        
         # Guardar configuración
         self.data_dir = data_dir
         self.embedding_model = embedding_model
@@ -131,14 +143,18 @@ class RAGEngine:
         B. Si NO existe:
            1. Cargar documentos con _load_documents()
            2. Dividir en chunks de 1000 caracteres con overlap de 100
-           3. Crear embeddings para cada chunk (texto → vector de 1024 números)
+           3. Crear embeddings para cada chunk (texto → vector usando OpenAI)
            4. Guardar en ChromaDB en disco para uso futuro
         
         Returns:
             Objeto Chroma (base de datos vectorial)
         """
-        # Crear función de embeddings (convierte texto en vectores numéricos)
-        embeddings = OllamaEmbeddings(model=self.embedding_model)
+        # Crear función de embeddings (convierte texto en vectores numéricos usando OpenAI)
+        embeddings = OpenAIEmbeddings(
+            model=self.embedding_model,
+            openai_api_key=os.getenv("OPENROUTER_API_KEY"),
+            openai_api_base="https://openrouter.ai/api/v1"
+        )
         
         # OPCIÓN A: Si ya existe la BD en disco
         if os.path.exists(self.persist_dir):
@@ -173,10 +189,10 @@ class RAGEngine:
             print(f"Creados {len(chunks)} chunks.")
             
             # PASO 3: Crear base de datos vectorial
-            # - Convierte cada chunk en un vector numérico (embedding)
+            # - Convierte cada chunk en un vector numérico (embedding) usando OpenAI
             # - Guarda los vectores + texto original en ChromaDB
             # - Persiste en disco para reutilizar
-            print(f"Creando base de datos vectorial con modelo {self.embedding_model}...")
+            print(f"Creando embeddings con modelo OpenAI {self.embedding_model}...")
             vector_db = Chroma.from_documents(
                 documents=chunks,  # Los chunks a procesar
                 embedding=embeddings,  # Función para crear embeddings
@@ -187,6 +203,104 @@ class RAGEngine:
         
         return vector_db
     
+    def add_document(self, file_path):
+        """
+        Agrega un documento individual a la base de datos existente.
+        
+        Este método NO borra la BD existente, solo agrega el nuevo documento.
+        
+        Args:
+            file_path: Ruta completa al archivo .txt o .md
+        
+        Returns:
+            int: Número de chunks agregados
+        """
+        try:
+            print(f"Procesando archivo para adición incremental: {file_path}")
+            
+            # 1. Cargar el documento
+            loader = TextLoader(file_path=file_path, encoding='utf-8')
+            docs = loader.load()
+            
+            if not docs:
+                print("El archivo está vacío o no se pudo cargar.")
+                return 0
+            
+            # 2. Dividir en chunks
+            print("Dividiendo texto en chunks...")
+            text_splitter = RecursiveCharacterTextSplitter(
+                chunk_size=1000,
+                chunk_overlap=100
+            )
+            chunks = text_splitter.split_documents(docs)
+            print(f"Creados {len(chunks)} chunks del nuevo archivo.")
+            
+            if not chunks:
+                print("No se generaron chunks (archivo muy pequeño?).")
+                return 0
+            
+            # 3. Agregar a la base de datos existente (sin borrar)
+            # ChromaDB maneja automáticamente la generación de IDs si no se proveen
+            print(f"Agregando chunks a ChromaDB en {self.persist_dir}...")
+            self.vector_db.add_documents(chunks)
+            print(f"✓ {len(chunks)} chunks agregados exitosamente.")
+            
+            return len(chunks)
+            
+        except Exception as e:
+            print(f"Error agregando documento {file_path}: {e}")
+            raise e
+
+    def delete_document(self, file_path):
+        """
+        Elimina un documento de la base de datos vectorial.
+        
+        Busca todos los chunks que tengan metadata 'source' == file_path
+        y los elimina.
+        
+        Args:
+            file_path: Ruta completa al archivo .txt o .md
+            
+        Returns:
+            bool: True si se eliminó algo, False si no
+        """
+        try:
+            print(f"Eliminando documento de la BD: {file_path}")
+            
+            # ChromaDB permite borrar por metadata usando 'where'
+            # source es el metadata que LangChain pone por defecto con el path
+            # IMPORTANTE: El path debe ser EXACTAMENTE el mismo que se usó al cargar
+            
+            # Primero verificamos si hay algo que borrar (opcional, pero bueno para logs)
+            results = self.vector_db.get(where={"source": file_path})
+            if not results or not results['ids']:
+                print(f"No se encontraron vectores para {file_path}")
+                return False
+            
+            count = len(results['ids'])
+            print(f"Encontrados {count} chunks para eliminar.")
+            
+            # Ejecutar borrado
+            # IMPORTANTE: Usamos delete() que es método público de Chroma (vectorstore)
+            # En LangChain 0.2+, Chroma.delete() acepta 'where'
+            # Si falla, intentamos _collection.delete()
+            try:
+                self.vector_db.delete(where={"source": file_path})
+            except:
+                # Fallback para versiones antiguas o diferente implementación
+                if hasattr(self.vector_db, '_collection'):
+                    self.vector_db._collection.delete(where={"source": file_path})
+                else:
+                    print("Error: No se encontró método delete compatible.")
+                    return False
+                    
+            print(f"✓ Documento eliminado de la BD exitosamente.")
+            return True
+            
+        except Exception as e:
+            print(f"Error eliminando documento {file_path}: {e}")
+            raise e
+
     def _setup_chain(self):
         """
         Configura el pipeline RAG (chain).
@@ -203,7 +317,7 @@ class RAGEngine:
            ├── Combina el contexto recuperado + pregunta original
            └── Crea un mensaje estructurado para el LLM
         
-        4. LLM (ChatOllama):
+        4. LLM (ChatOpenAI vía OpenRouter):
            ├── Procesa el prompt
            └── Genera respuesta basada en el contexto
         
@@ -215,9 +329,17 @@ class RAGEngine:
         Returns:
             Chain completo (pipeline) listo para usar
         """
-        # Inicializar el modelo de lenguaje
-        print(f"Inicializando LLM {self.llm_model}...")
-        llm = ChatOllama(model=self.llm_model)
+        # Inicializar el modelo de lenguaje (OpenAI vía OpenRouter)
+        print(f"Inicializando LLM {self.llm_model} vía OpenRouter...")
+        llm = ChatOpenAI(
+            model=self.llm_model,
+            openai_api_key=os.getenv("OPENROUTER_API_KEY"),
+            openai_api_base="https://openrouter.ai/api/v1",
+            default_headers={
+                "HTTP-Referer": "https://github.com/backendRAG",  # Opcional: para analytics
+                "X-Title": "RAG System"  # Opcional: nombre de tu app
+            }
+        )
         
         # COMPONENTE 1: MultiQueryRetriever
         # Genera múltiples versiones de la pregunta para mejorar la búsqueda

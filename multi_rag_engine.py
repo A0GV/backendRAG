@@ -128,3 +128,113 @@ class MultiRAGEngine:
         )
         
         print("\n=== Actualización Completa ✓ ===")
+
+    def add_document_to_target(self, file_path, target):
+        """
+        Agrega un documento a la base de datos del target especificado.
+        
+        Args:
+            file_path: Ruta al archivo .txt/.md
+            target: "distribuidor" o "cliente"
+        
+        Returns:
+            dict: Stats de la operación
+        """
+        print(f"\n=== Agregando documento incremental ===")
+        print(f"Archivo: {file_path}")
+        print(f"Target: {target}")
+        
+        target = target.lower().strip()
+        chunks_added = 0
+        
+        if target == "distribuidor":
+            # Distribuidor tiene acceso a todo dataSet/
+            chunks_added = self.rag_distribuidor.add_document(file_path)
+            
+        elif target == "cliente":
+            # Cliente tiene acceso solo a datasetGen/
+            # Se indexa en Cliente
+            chunks_added = self.rag_cliente.add_document(file_path)
+            
+            # Sincronizar con Distribuidor (que tiene acceso total)
+            print(">> Sincronizando también con Distribuidor (acceso total)...")
+            try:
+                self.rag_distribuidor.add_document(file_path)
+                print(">> Distribuidor sincronizado correctamente.")
+            except Exception as e:
+                print(f"Warning: No se pudo sincronizar con Distribuidor: {e}")
+            
+        else:
+            raise ValueError(f"Target inválido: {target}. Use 'distribuidor' o 'cliente'.")
+            
+        print(f"=== Documento agregado exitosamente ({chunks_added} chunks) ===\n")
+        return {"target": target, "chunks_added": chunks_added}
+        
+    def delete_document_from_target(self, filename, target):
+        """
+        Elimina un documento de la base de datos y del disco.
+        
+        Args:
+            filename: Nombre del archivo (ej: "manual.md")
+            target: "distribuidor" o "cliente"
+            
+        Returns:
+            dict: Stats de la operación
+        """
+        print(f"\n=== Eliminando documento incremental ===")
+        print(f"Archivo: {filename}")
+        print(f"Target: {target}")
+        
+        target = target.lower().strip()
+        import os
+        
+        # 1. Determinar path y directorio
+        if target == "distribuidor":
+            file_dir = "dataSet"
+        elif target == "cliente":
+            file_dir = "dataSet/datasetGen"
+        else:
+            raise ValueError(f"Target inválido: {target}. Use 'distribuidor' o 'cliente'.")
+            
+        file_path = os.path.join(file_dir, filename)
+        
+        # 2. Verificar existencia en disco
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"El archivo {filename} no existe en {file_dir}")
+            
+        # 3. Eliminar de las bases de datos vectoriales
+        # IMPORTANTE: Debemos usar el PATH RELATIVO o ABSOLUTO EXACTO que se usó al cargar.
+        # TextLoader y nuestro sistema usan paths relativos al cargar.
+        
+        deleted_count = 0
+        
+        if target == "distribuidor":
+            # Distribuidor tiene acceso a todo dataSet/
+            deleted = self.rag_distribuidor.delete_document(file_path)
+            if deleted: deleted_count += 1
+            
+        elif target == "cliente":
+            # Cliente tiene acceso solo a datasetGen/
+            deleted_cli = self.rag_cliente.delete_document(file_path)
+            if deleted_cli: deleted_count += 1
+            
+            # Sincronizar con Distribuidor (que tiene acceso total)
+            print(">> Sincronizando eliminación con Distribuidor (acceso total)...")
+            try:
+                # El distribuidor ve TODO, así que si borramos de cliente, debemos borrar de distribuidor
+                deleted_dist = self.rag_distribuidor.delete_document(file_path)
+                if deleted_dist: deleted_count += 1
+                print(">> Distribuidor sincronizado correctamente.")
+            except Exception as e:
+                print(f"Warning: No se pudo sincronizar con Distribuidor: {e}")
+        
+        # 4. Eliminar del disco
+        try:
+            os.remove(file_path)
+            print(f"✓ Archivo {file_path} eliminado del disco.")
+        except Exception as e:
+            print(f"Error eliminando archivo del disco: {e}")
+            raise e
+            
+        print(f"=== Documento eliminado exitosamente ===\n")
+        return {"target": target, "filename": filename, "deleted": True}

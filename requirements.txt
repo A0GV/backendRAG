@@ -6,21 +6,12 @@ langchain_text_splitters==1.0.0
 langchain-classic==1.0.0
 langchain-chroma>=0.2.0
 
-# LLM & Embeddings - Ollama (Actual)
-ollama>=0.6.0
-langchain-ollama==1.0.1
+# LLM & Embeddings - OpenRouter/OpenAI
+langchain-openai>=0.2.0
+openai>=1.0.0
 
-# LLM & Embeddings - Alternativas (Descomentar según necesidad)
-# Para Google Gemini:
-# langchain-google-genai>=2.0.0
-# google-generativeai>=0.8.0
-
-# Para OpenAI/Azure OpenAI:
-# langchain-openai>=0.2.0
-# openai>=1.0.0
-
-# Para variables de entorno (.env)
-# python-dotenv>=1.0.0
+# Variables de entorno (.env)
+python-dotenv>=1.0.0
 
 # Vector Database
 chromadb>=0.4.22
