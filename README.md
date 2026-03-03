@@ -1,286 +1,323 @@
 # Sistema RAG con OpenRouter/OpenAI
 
-Sistema de Retrieval-Augmented Generation (RAG) que usa OpenAI a través de OpenRouter para responder preguntas basándose en documentos locales.
+Sistema de Retrieval-Augmented Generation (RAG) que responde preguntas basándose en documentos locales (.txt y .md) usando OpenAI vía OpenRouter. Soporta dos bases de conocimiento independientes con acceso diferenciado por rol.
 
-## 🚀 Características
-
-- **Múltiples bases de datos**: Soporte para diferentes contextos (Cliente/Distribuidor)
-- **OpenAI vía OpenRouter**: Usa GPT-4o para respuestas y text-embedding-3-small para vectores
-- **Persistencia**: ChromaDB guarda embeddings en disco para reutilización
-- **API REST**: Endpoints Flask para integración
-- **CLI Interactivo**: Interfaz de línea de comandos con `tre.py`
-
-## 📋 Requisitos
+## Requisitos
 
 - Python 3.10+
-- Cuenta en [OpenRouter](https://openrouter.ai)
-- API Key de OpenRouter
+- Cuenta y API key en [OpenRouter](https://openrouter.ai)
 
-## 🔧 Instalación
-
-### 1. Clonar el repositorio
+## Instalación
 
 ```bash
-git clone <tu-repo>
+git clone <repo>
 cd backendRAG
-```
-
-### 2. Crear entorno virtual
-
-```bash
 python3 -m venv .venv
-source .venv/bin/activate  # En Windows: .venv\Scripts\activate
-```
-
-### 3. Instalar dependencias
-
-```bash
+source .venv/bin/activate
 pip install -r requirements.txt
-```
-
-### 4. Configurar API Key
-
-Crea un archivo `.env` en la raíz del proyecto:
-
-```bash
 cp .env.example .env
+# Editar .env y agregar: OPENROUTER_API_KEY=sk-or-v1-...
 ```
 
-Edita `.env` y agrega tu API key de OpenRouter:
+Para obtener la API key: https://openrouter.ai/keys
 
-```env
-OPENROUTER_API_KEY=sk-or-v1-tu-key-aqui
-```
-
-**¿Cómo obtener la API key?**
-1. Crea una cuenta en https://openrouter.ai
-2. Ve a https://openrouter.ai/keys
-3. Crea una nueva API key
-4. Copia y pega en tu archivo `.env`
-
-## 📁 Estructura de Datos
+## Estructura del proyecto
 
 ```
 backendRAG/
-├── dataSet/              # Documentos para Distribuidor (acceso completo)
-│   ├── geocercas.md
-│   ├── mapa.md
-│   └── datasetGen/       # Documentos para Cliente (acceso restringido)
-│       └── info_distribuidor.txt
-├── chroma_distribuidor/  # ChromaDB para Distribuidor (generada automáticamente)
-├── chroma_cliente/       # ChromaDB para Cliente (generada automáticamente)
-└── .env                  # Tu API key (NO SUBIR A GIT)
+├── rag_engine.py           # Motor RAG (clase RAGEngine)
+├── multi_rag_engine.py     # Orquestador dual (clase MultiRAGEngine)
+├── tre.py                  # CLI interactivo
+├── server/
+│   ├── run.py
+│   └── app/
+│       ├── __init__.py
+│       └── routes.py       # Endpoints Flask
+├── dataSet/                # Documentos solo para distribuidor
+│   └── datasetGen/         # Documentos para cliente y distribuidor
+├── chroma_distribuidor/    # ChromaDB distribuidor (generada automaticamente)
+├── chroma_cliente/         # ChromaDB cliente (generada automaticamente)
+├── .env                    # API key (no subir a git)
+└── .env.example            # Plantilla de configuracion
 ```
 
-## 🎮 Uso
+## Arquitectura
 
-### Modo CLI Interactivo
+El sistema tiene dos niveles:
+
+**RAGEngine** — motor individual para una base de datos ChromaDB:
+1. Carga archivos `.txt` y `.md` desde un directorio
+2. Divide el texto en chunks (1000 chars, overlap 100)
+3. Genera embeddings con `text-embedding-3-small` via OpenRouter
+4. Almacena en ChromaDB (persiste en disco)
+5. Responde preguntas usando MultiQueryRetriever + GPT-4o
+
+**MultiRAGEngine** — orquestador de dos instancias RAGEngine:
+- `distribuidor`: accede a todo `dataSet/` (incluye subdirectorios)
+- `cliente`: accede solo a `dataSet/datasetGen/`
+- Enruta las consultas y operaciones al motor correcto
+- Sincroniza: archivos subidos/borrados de cliente tambien se aplican en distribuidor
+
+Flujo de una consulta:
+1. El cliente envia pregunta + `db_type`
+2. MultiRAGEngine selecciona el RAGEngine correcto
+3. RAGEngine genera 5 variaciones de la pregunta (MultiQueryRetriever)
+4. Busca chunks similares en ChromaDB
+5. GPT-4o genera respuesta basada en el contexto recuperado
+
+## Bases de conocimiento
+
+| Rol | Datos accesibles | Directorio fisico |
+|-----|-----------------|-------------------|
+| `cliente` | Solo `datasetGen/` | `dataSet/datasetGen/` |
+| `distribuidor` | Todo `dataSet/` | `dataSet/` (recursivo) |
+
+Un archivo subido con `target=cliente` se guarda en `datasetGen/` y se indexa en ambas bases.
+Un archivo subido con `target=distribuidor` se guarda en `dataSet/` y solo se indexa en distribuidor.
+
+## Uso: CLI interactivo
 
 ```bash
 python3 tre.py
 ```
 
-Comandos disponibles:
-- `use cliente` - Cambia a BD restringida (solo datasetGen/)
-- `use distribuidor` - Cambia a BD completa (todo dataSet/)
-- `update` - Recrea ambas bases de datos
-- `q` - Salir
+Comandos disponibles en el CLI:
 
-**Ejemplo:**
-```
-[cliente] Your question: ¿Qué son las geocercas?
-# Respuesta: No tengo información (porque está en dataSet/ que Cliente no ve)
+| Comando | Descripcion |
+|---------|-------------|
+| `use cliente` | Cambia a base de datos cliente |
+| `use distribuidor` | Cambia a base de datos distribuidor |
+| `update` | Reconstruye ambas bases de datos desde disco |
+| `q` | Salir |
 
-[cliente] Your question: use distribuidor
-Switched to DISTRIBUIDOR database (Full Access)
+## Uso: API REST
 
-[distribuidor] Your question: ¿Qué son las geocercas?
-# Respuesta: Las geocercas son perímetros virtuales...
-```
-
-### Modo API
-
-#### Iniciar servidor
+Iniciar el servidor:
 
 ```bash
 cd server
 python3 run.py
 ```
 
-El servidor estará disponible en `http://localhost:5000`
+El servidor queda disponible en `http://localhost:5000`.
 
-#### Endpoints
+---
 
-**POST /api/ask** - Hacer una pregunta
+### GET /
 
-```bash
-curl -X POST http://localhost:5000/api/ask \
-  -H "Content-Type: application/json" \
-  -d '{
-    "question": "¿Qué son las geocercas?",
-    "db_type": "distribuidor"
-  }'
+Health check. Retorna `{"status": "ok"}` si el sistema esta listo.
+
+---
+
+### POST /api/ask
+
+Hace una pregunta al sistema RAG.
+
+Request:
+```json
+{
+  "question": "Que son las geocercas?",
+  "db_type": "distribuidor"
+}
 ```
 
-Respuesta:
+`db_type` es opcional, por defecto `"cliente"`.
+
+Response:
 ```json
 {
   "success": true,
-  "answer": "Las geocercas son perímetros virtuales...",
+  "answer": "Las geocercas son perimetros virtuales...",
   "db_used": "distribuidor"
 }
 ```
 
-**POST /api/update** - Actualizar bases de datos
-
+Ejemplo con curl:
 ```bash
-curl -X POST http://localhost:5000/api/update
+curl -X POST http://localhost:5000/api/ask \
+  -H "Content-Type: application/json" \
+  -d '{"question": "Que son las geocercas?", "db_type": "distribuidor"}'
 ```
 
-### Modo Python
+Ejemplo con JavaScript:
+```javascript
+const response = await fetch('http://localhost:5000/api/ask', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ question: 'Que son las geocercas?', db_type: 'distribuidor' })
+});
+const data = await response.json();
+console.log(data.answer);
+```
 
+---
+
+### POST /api/update
+
+Reconstruye ambas bases de datos desde los archivos en disco. Util despues de editar o eliminar archivos manualmente.
+
+Request: sin body.
+
+Response:
+```json
+{
+  "success": true,
+  "message": "All databases updated successfully"
+}
+```
+
+---
+
+### POST /api/upload
+
+Sube un archivo nuevo y lo indexa incrementalmente sin reconstruir la base de datos.
+
+Request (multipart/form-data):
+
+| Campo | Tipo | Descripcion |
+|-------|------|-------------|
+| `file` | File | Archivo `.txt` o `.md` |
+| `target` | Text | `"cliente"` o `"distribuidor"` |
+
+Response:
+```json
+{
+  "success": true,
+  "message": "File uploaded and indexed successfully",
+  "filename": "manual.md",
+  "target": "cliente",
+  "chunks_added": 15
+}
+```
+
+Ejemplo con curl:
+```bash
+curl -X POST http://localhost:5000/api/upload \
+  -F "file=@/ruta/al/archivo.md" \
+  -F "target=cliente"
+```
+
+Ejemplo con JavaScript:
+```javascript
+const formData = new FormData();
+formData.append('file', fileInput.files[0]);
+formData.append('target', 'cliente');
+
+const response = await fetch('http://localhost:5000/api/upload', {
+  method: 'POST',
+  body: formData
+});
+const data = await response.json();
+```
+
+Ejemplo con Python:
 ```python
-from multi_rag_engine import MultiRAGEngine
+import requests
 
-# Inicializar
-rag = MultiRAGEngine()
-
-# Consulta con distribuidor (acceso completo)
-respuesta = rag.ask(
-    "¿Qué son las geocercas?", 
-    db_type="distribuidor"
-)
-print(respuesta)
-
-# Consulta con cliente (acceso restringido)
-respuesta = rag.ask(
-    "¿Cuál es el margen?", 
-    db_type="cliente"
-)
-print(respuesta)
-
-# Actualizar bases de datos
-rag.update_database()
+with open('archivo.md', 'rb') as f:
+    response = requests.post(
+        'http://localhost:5000/api/upload',
+        files={'file': f},
+        data={'target': 'distribuidor'}
+    )
+print(response.json())
 ```
 
-## 💰 Costos (OpenRouter)
+---
 
-**Modelos usados:**
-- **GPT-4o**: ~$2.50/1M tokens input, ~$10/1M tokens output
-- **text-embedding-3-small**: ~$0.02/1M tokens
+### POST /api/delete
 
-**Estimaciones:**
-- Crear embeddings para 50 documentos (~50k tokens): ~$0.001
-- Una consulta típica (1k tokens input + 500 tokens output): ~$0.008
+Elimina un documento de la base de datos vectorial y del disco.
+
+Request (JSON):
+
+| Campo | Tipo | Descripcion |
+|-------|------|-------------|
+| `filename` | String | Nombre del archivo (ej: `"manual.md"`) |
+| `target` | String | `"cliente"` o `"distribuidor"` |
+
+Response:
+```json
+{
+  "success": true,
+  "message": "File deleted successfully",
+  "filename": "manual.md",
+  "target": "cliente"
+}
+```
+
+Ejemplo con curl:
+```bash
+curl -X POST http://localhost:5000/api/delete \
+  -H "Content-Type: application/json" \
+  -d '{"filename": "manual_obsoleto.md", "target": "cliente"}'
+```
+
+Nota: si el target es `cliente`, el archivo tambien se elimina del indice de distribuidor.
+
+---
+
+## Costos (OpenRouter)
+
+Modelos en uso:
+- GPT-4o: ~$2.50/1M tokens entrada, ~$10/1M tokens salida
+- text-embedding-3-small: ~$0.02/1M tokens
+
+Estimaciones:
+- Indexar 50 documentos (~50k tokens): ~$0.001
+- Consulta tipica (1k entrada + 500 salida): ~$0.008
 - 1000 consultas/mes: ~$8
 
-💡 **Tip**: Monitorea tu uso en el [dashboard de OpenRouter](https://openrouter.ai/activity)
+Monitorea el uso en https://openrouter.ai/activity
 
-## 🔒 Seguridad
+## Seguridad
 
-- ✅ `.env` está en `.gitignore` (tu API key NO se sube a Git)
-- ✅ Usa variables de entorno para credenciales
-- ⚠️ NUNCA hagas commit de tu `.env`
-- ⚠️ NUNCA compartas tu API key públicamente
+- El archivo `.env` esta en `.gitignore` y no se sube a git
+- Nunca hagas commit de la API key
+- La API key se carga desde variables de entorno con `python-dotenv`
 
-## 🛠️ Desarrollo
+## Desarrollo
 
-### Agregar nuevos documentos
+### Agregar documentos manualmente
 
-1. Agrega archivos `.txt` o `.md` a `dataSet/` o `dataSet/datasetGen/`
-2. Ejecuta `update` en el CLI o llama a `rag.update_database()`
-3. Las ChromaDBs se recrearán con los nuevos documentos
+1. Copiar archivos `.txt` o `.md` a `dataSet/` (distribuidor) o `dataSet/datasetGen/` (cliente)
+2. Ejecutar `update` en el CLI o llamar `POST /api/update`
+3. Las ChromaDBs se reconstruyen con todos los archivos del directorio
 
 ### Cambiar modelos
 
-Edita `multi_rag_engine.py`:
+Editar los parametros en `multi_rag_engine.py`:
 
 ```python
-# Para usar GPT-3.5-turbo en vez de GPT-4o
 self.rag_distribuidor = RAGEngine(
-    llm_model="openai/gpt-3.5-turbo",  # Más barato
+    llm_model="openai/gpt-3.5-turbo",       # modelo mas barato
     embedding_model="text-embedding-3-small"
 )
 ```
 
-Modelos disponibles en OpenRouter: https://openrouter.ai/models
+Lista de modelos disponibles: https://openrouter.ai/models
 
-## 📊 Arquitectura
+## Troubleshooting
 
-```
-┌─────────────────────────────────────┐
-│      MultiRAGEngine                 │
-│   (Orquestador de contextos)       │
-└────────────┬────────────────────────┘
-             │
-    ┌────────┴────────┐
-    │                 │
-┌───▼────┐      ┌────▼────┐
-│RAGEngine│      │RAGEngine│
-│Cliente  │      │Distrib. │
-│(Restric)│      │(Full)   │
-└───┬─────┘      └────┬────┘
-    │                 │
-    │   OpenAI API    │
-    │   via OpenRouter│
-    └─────────────────┘
-```
-
-### Flujo de una consulta
-
-1. **Usuario**: Envía pregunta + `db_type`
-2. **MultiRAGEngine**: Selecciona RAGEngine correcto
-3. **RAGEngine**: 
-   - Genera 5 variaciones de la pregunta (MultiQueryRetriever)
-   - Busca documentos similares en ChromaDB
-   - Recupera top chunks relevantes
-4. **OpenAI (GPT-4o)**: Genera respuesta basada en contexto
-5. **Usuario**: Recibe respuesta
-
-## 🐛 Troubleshooting
-
-### Error: "OPENROUTER_API_KEY no encontrada"
-
-**Solución**: Asegúrate de que el archivo `.env` existe y contiene:
+**"OPENROUTER_API_KEY no encontrada"**
+Verificar que el archivo `.env` existe en la raiz del proyecto y contiene:
 ```
 OPENROUTER_API_KEY=sk-or-v1-tu-key-aqui
 ```
 
-### Error: "attempt to write a readonly database"
-
-**Solución**: Elimina las ChromaDBs y vuelve a crearlas:
+**"attempt to write a readonly database"**
+ChromaDB tiene locks activos. Eliminar los directorios y reiniciar:
 ```bash
 rm -rf chroma_cliente chroma_distribuidor
-python3 tre.py  # Se recrearán automáticamente
+python3 tre.py
 ```
 
-### Error: Rate limit / 429
+**Rate limit / error 429**
+OpenRouter reintenta automaticamente. Si persiste, revisar limites en https://openrouter.ai/settings/limits
 
-**Solución**: OpenRouter maneja rate limits automáticamente con retries. Si persiste:
-1. Verifica tu límite en https://openrouter.ai/settings/limits
-2. Espera unos minutos
-3. Considera agregar créditos
+**El modelo sigue respondiendo sobre contenido eliminado**
+Al editar o borrar archivos en disco, los vectores en ChromaDB no se actualizan automaticamente. Usar `update` (CLI) o `POST /api/update` para reconstruir la base, o usar `POST /api/delete` para borrar un archivo especifico.
 
-### Las respuestas están en inglés
-
-**Solución**: El prompt ya incluye "Responde en el mismo idioma de la pregunta". Si persiste, verifica que tu pregunta esté en español.
-
-## 📝 Licencia
+## Licencia
 
 MIT
-
-## 🤝 Contribuir
-
-1. Fork el proyecto
-2. Crea una rama (`git checkout -b feature/mejora`)
-3. Commit cambios (`git commit -am 'Agrega mejora'`)
-4. Push a la rama (`git push origin feature/mejora`)
-5. Abre un Pull Request
-
-## 📧 Contacto
-
-Para preguntas o soporte, abre un issue en GitHub.
-
----
-
-**Nota**: Este proyecto usa OpenRouter para acceder a modelos de OpenAI. OpenRouter es un servicio independiente que facilita el acceso a múltiples proveedores de LLMs con un solo endpoint y API key.
