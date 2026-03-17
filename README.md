@@ -297,27 +297,3 @@ self.rag_distribuidor = RAGEngine(
 
 Lista de modelos disponibles: https://openrouter.ai/models
 
-## Troubleshooting
-
-**"OPENROUTER_API_KEY no encontrada"**
-Verificar que el archivo `.env` existe en la raiz del proyecto y contiene:
-```
-OPENROUTER_API_KEY=sk-or-v1-tu-key-aqui
-```
-
-**"attempt to write a readonly database"**
-ChromaDB tiene locks activos. Eliminar los directorios y reiniciar:
-```bash
-rm -rf chroma_cliente chroma_distribuidor
-python3 tre.py
-```
-
-**Rate limit / error 429**
-OpenRouter reintenta automaticamente. Si persiste, revisar limites en https://openrouter.ai/settings/limits
-
-**El modelo sigue respondiendo sobre contenido eliminado**
-Al editar o borrar archivos en disco, los vectores en ChromaDB no se actualizan automaticamente. Usar `update` (CLI) o `POST /api/update` para reconstruir la base, o usar `POST /api/delete` para borrar un archivo especifico.
-
-## Licencia
-
-MIT
